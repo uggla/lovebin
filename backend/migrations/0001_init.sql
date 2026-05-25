@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS hearts (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    count INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT OR IGNORE INTO hearts (id, count) VALUES (1, 0);
+
+CREATE TABLE IF NOT EXISTS heart_votes (
+    voter_id TEXT PRIMARY KEY,
+    last_voted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

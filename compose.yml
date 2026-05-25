@@ -1,0 +1,29 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: sqlite:/data/hearts.db
+      BIND_ADDR: 0.0.0.0:3000
+      COOKIE_NAME: cleanup_heart_vote
+      COOKIE_SECURE: "false"
+      COOKIE_SAME_SITE: Lax
+      VOTE_WINDOW_SECONDS: "172800"
+      RUST_LOG: cleanup_hearts_backend=info,tower_http=info
+    expose:
+      - "3000"
+    volumes:
+      - hearts-data:/data
+    restart: unless-stopped
+
+volumes:
+  hearts-data:
