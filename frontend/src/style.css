@@ -689,6 +689,26 @@ p {
   object-fit: cover;
 }
 
+.app-footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1.3rem;
+}
+
+.made-with {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  color: #315944;
+  font-size: 0.95rem;
+}
+
+.logo.inline {
+  height: 1.2rem;
+}
+
 @keyframes float {
   0%,
   100% {
