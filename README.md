@@ -1,4 +1,4 @@
-# Cleanup Hearts
+# Lovebin
 
 Petite page web pour présenter une action de ramassage des déchets et permettre aux visiteurs d'envoyer un cœur de soutien.
 
@@ -8,6 +8,10 @@ Petite page web pour présenter une action de ramassage des déchets et permettr
 - Backend Rust Axum + SQLx + SQLite embarqué.
 - Déploiement en 2 containers : `frontend` public et `backend` privé.
 - SQLite persisté dans un volume monté sur `/data`.
+
+## Site
+
+La page publique est prévue pour `https://lovebin.uggla.fr`.
 
 ## Lancer avec Docker ou Podman
 
@@ -112,3 +116,9 @@ Le frontend contient déjà la section :
 ```
 
 Elle peut recevoir plus tard une galerie responsive ou un carrousel simple avec des images statiques.
+
+Les images actuelles sont servies depuis `frontend/public/photos/` et sont embarquées dans l'image frontend au build.
+
+## Licence
+
+Ce projet est distribué sous licence Apache 2.0. Voir le fichier [LICENSE](LICENSE) pour le texte complet.
