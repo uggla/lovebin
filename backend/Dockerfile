@@ -1,14 +1,29 @@
-FROM rust:1.86-alpine AS build
+# syntax=docker/dockerfile:1
+ARG RUST_VERSION=1.94.1
+FROM docker.io/rust:${RUST_VERSION}-slim-trixie AS build
+
 WORKDIR /app
-RUN apk add --no-cache musl-dev
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pkg-config ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY Cargo.toml Cargo.lock* ./
 COPY migrations ./migrations
 COPY src ./src
 RUN cargo build --release
 
-FROM alpine:3.21
-RUN addgroup -S app && adduser -S app -G app && mkdir -p /data && chown -R app:app /data
-USER app
+FROM docker.io/debian:trixie-slim AS runtime
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 10001 appuser \
+    && mkdir -p /data \
+    && chown -R appuser:appuser /data
+
+USER appuser
 WORKDIR /app
 COPY --from=build /app/target/release/cleanup-hearts-backend /usr/local/bin/cleanup-hearts-backend
 ENV DATABASE_URL=sqlite:/data/hearts.db \
