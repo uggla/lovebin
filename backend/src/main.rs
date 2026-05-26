@@ -52,6 +52,11 @@ struct VoteResponse {
     retry_after_seconds: Option<u64>,
 }
 
+#[derive(Serialize)]
+struct HeartHistoryResponse {
+    events: Vec<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::registry()
@@ -115,6 +120,7 @@ fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/hearts", get(get_hearts).post(post_hearts))
+        .route("/api/hearts/history", get(get_heart_history))
         .route_layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -139,7 +145,10 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         .context("failed to run database migrations")
 }
 
-async fn get_hearts(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<HeartsResponse>> {
+async fn get_hearts(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> ApiResult<Json<HeartsResponse>> {
     let count = current_count(&state.pool).await?;
     let already_voted = match read_voter_cookie(&headers, &state.config.cookie_name) {
         Some(voter_id) => recent_vote(&state.pool, &voter_id, state.config.vote_window)
@@ -154,15 +163,28 @@ async fn get_hearts(State(state): State<AppState>, headers: HeaderMap) -> ApiRes
     }))
 }
 
+async fn get_heart_history(State(state): State<AppState>) -> ApiResult<Json<HeartHistoryResponse>> {
+    let events = sqlx::query_scalar::<_, String>(
+        "SELECT voted_at FROM heart_events ORDER BY voted_at ASC, id ASC",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(HeartHistoryResponse { events }))
+}
+
 async fn post_hearts(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Response> {
-    let voter_id = read_voter_cookie(&headers, &state.config.cookie_name)
-        .unwrap_or_else(generate_voter_id);
+    let voter_id =
+        read_voter_cookie(&headers, &state.config.cookie_name).unwrap_or_else(generate_voter_id);
 
     if let Some(retry_after_seconds) =
         recent_vote(&state.pool, &voter_id, state.config.vote_window).await?
     {
         let count = current_count(&state.pool).await?;
-        info!("vote refused for voter_id={} retry_after_seconds={}", voter_id, retry_after_seconds);
+        info!(
+            "vote refused for voter_id={} retry_after_seconds={}",
+            voter_id, retry_after_seconds
+        );
 
         let mut response = Json(VoteResponse {
             count,
@@ -176,12 +198,12 @@ async fn post_hearts(State(state): State<AppState>, headers: HeaderMap) -> ApiRe
     }
 
     let mut tx = state.pool.begin().await?;
+    let voted_at = Utc::now().to_rfc3339();
 
-    let count = sqlx::query_scalar::<_, i64>(
-        "UPDATE hearts SET count = count + 1 WHERE id = 1 RETURNING count",
-    )
-    .fetch_one(&mut *tx)
-    .await?;
+    sqlx::query("INSERT INTO heart_events (voted_at) VALUES (?1)")
+        .bind(&voted_at)
+        .execute(&mut *tx)
+        .await?;
 
     sqlx::query(
         "INSERT INTO heart_votes (voter_id, last_voted_at)
@@ -189,9 +211,13 @@ async fn post_hearts(State(state): State<AppState>, headers: HeaderMap) -> ApiRe
          ON CONFLICT(voter_id) DO UPDATE SET last_voted_at = excluded.last_voted_at",
     )
     .bind(&voter_id)
-    .bind(Utc::now().to_rfc3339())
+    .bind(&voted_at)
     .execute(&mut *tx)
     .await?;
+
+    let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM heart_events")
+        .fetch_one(&mut *tx)
+        .await?;
 
     tx.commit().await?;
     info!("vote accepted count={}", count);
@@ -208,7 +234,7 @@ async fn post_hearts(State(state): State<AppState>, headers: HeaderMap) -> ApiRe
 }
 
 async fn current_count(pool: &SqlitePool) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar("SELECT count FROM hearts WHERE id = 1")
+    sqlx::query_scalar("SELECT COUNT(*) FROM heart_events")
         .fetch_one(pool)
         .await
 }
@@ -230,7 +256,10 @@ async fn recent_vote(
     };
 
     let Some(last_vote) = parse_sqlite_time(&last_voted_at) else {
-        warn!("ignoring unreadable vote timestamp for voter_id={}", voter_id);
+        warn!(
+            "ignoring unreadable vote timestamp for voter_id={}",
+            voter_id
+        );
         return Ok(None);
     };
 
@@ -305,8 +334,9 @@ fn ensure_sqlite_parent_exists(database_url: &str) -> Result<()> {
     let path = path.trim_start_matches("//");
     if let Some(parent) = Path::new(path).parent() {
         if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create database directory {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create database directory {}", parent.display())
+            })?;
         }
     }
 
@@ -459,6 +489,13 @@ mod tests {
             .to_owned()
     }
 
+    async fn event_count(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM heart_events")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn get_hearts_returns_initial_count_and_vote_state() {
         let (app, _pool) = test_app(Duration::from_secs(60)).await;
@@ -486,6 +523,7 @@ mod tests {
         assert!(set_cookie.contains("Max-Age=60"));
         assert!(!set_cookie.contains("Secure"));
         assert_eq!(current_count(&pool).await.unwrap(), 1);
+        assert_eq!(event_count(&pool).await, 1);
     }
 
     #[tokio::test]
@@ -510,13 +548,15 @@ mod tests {
         assert_eq!(second_json["reason"], "already_voted");
         assert!(second_json["retry_after_seconds"].as_u64().unwrap() <= 60);
         assert_eq!(current_count(&pool).await.unwrap(), 1);
+        assert_eq!(event_count(&pool).await, 1);
     }
 
     #[tokio::test]
     async fn get_hearts_reports_already_voted_when_cookie_vote_is_recent() {
         let (app, _pool) = test_app(Duration::from_secs(60)).await;
 
-        let (headers, _json) = request_json(app.clone(), request(Method::POST, "/api/hearts")).await;
+        let (headers, _json) =
+            request_json(app.clone(), request(Method::POST, "/api/hearts")).await;
         let get_request = Request::builder()
             .method(Method::GET)
             .uri("/api/hearts")
@@ -534,7 +574,8 @@ mod tests {
     async fn post_hearts_allows_vote_after_window_expires() {
         let (app, pool) = test_app(Duration::from_secs(60)).await;
 
-        let (headers, _json) = request_json(app.clone(), request(Method::POST, "/api/hearts")).await;
+        let (headers, _json) =
+            request_json(app.clone(), request(Method::POST, "/api/hearts")).await;
         let cookie = cookie_pair(&headers);
         let voter_id = cookie.strip_prefix("test_heart_vote=").unwrap();
         let old_vote_time = (Utc::now() - chrono::Duration::seconds(61)).to_rfc3339();
@@ -557,6 +598,55 @@ mod tests {
         assert_eq!(json["count"], 2);
         assert_eq!(json["voted"], true);
         assert_eq!(current_count(&pool).await.unwrap(), 2);
+        assert_eq!(event_count(&pool).await, 2);
+    }
+
+    #[tokio::test]
+    async fn get_heart_history_returns_accepted_vote_timestamps() {
+        let (app, pool) = test_app(Duration::from_secs(60)).await;
+
+        let (_headers, initial_json) =
+            request_json(app.clone(), request(Method::GET, "/api/hearts/history")).await;
+        assert_eq!(initial_json["events"].as_array().unwrap().len(), 0);
+
+        let (headers, _json) =
+            request_json(app.clone(), request(Method::POST, "/api/hearts")).await;
+        let refused_request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/hearts")
+            .header(header::COOKIE, cookie_pair(&headers))
+            .body(Body::empty())
+            .unwrap();
+        let (_headers, _json) = request_json(app.clone(), refused_request).await;
+
+        let (_headers, history_json) =
+            request_json(app, request(Method::GET, "/api/hearts/history")).await;
+        let events = history_json["events"].as_array().unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert!(parse_sqlite_time(events[0].as_str().unwrap()).is_some());
+        assert_eq!(event_count(&pool).await, 1);
+    }
+
+    #[tokio::test]
+    async fn migrations_replace_counter_table_with_event_table() {
+        let (_app, pool) = test_app(Duration::from_secs(60)).await;
+
+        let hearts_table = sqlx::query_scalar::<_, String>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'hearts'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        let heart_events_table = sqlx::query_scalar::<_, String>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'heart_events'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+
+        assert!(hearts_table.is_none());
+        assert_eq!(heart_events_table.as_deref(), Some("heart_events"));
     }
 
     #[test]

@@ -7,7 +7,8 @@ Petite page web pour présenter une action de ramassage des déchets et permettr
 - Frontend Vite + TypeScript, sans framework.
 - Backend Rust Axum + SQLx + SQLite embarqué.
 - Déploiement en 2 containers : `frontend` public et `backend` privé.
-- SQLite persisté dans un volume monté sur `/data`.
+- SQLite persisté dans `/data`.
+- Les cœurs acceptés sont stockés comme des événements datés.
 
 ## Site
 
@@ -70,6 +71,8 @@ En local HTTP, `COOKIE_SECURE=false` est nécessaire pour que le navigateur cons
 
 ## API
 
+Le compteur est calculé depuis l'historique des cœurs. Les anciennes données du compteur initial ne sont pas conservées par la migration vers ce modèle événementiel.
+
 ```http
 GET /api/hearts
 ```
@@ -102,6 +105,21 @@ Déjà voté :
   "voted": false,
   "reason": "already_voted",
   "retry_after_seconds": 172800
+}
+```
+
+```http
+GET /api/hearts/history
+```
+
+Retourne les timestamps publics des cœurs acceptés, triés du plus ancien au plus récent :
+
+```json
+{
+  "events": [
+    "2026-05-26T12:34:56.789Z",
+    "2026-05-26T13:10:22.123Z"
+  ]
 }
 ```
 
