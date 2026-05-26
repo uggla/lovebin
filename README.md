@@ -7,7 +7,7 @@ Petite page web pour présenter une action de ramassage des déchets et permettr
 - Frontend Vite + TypeScript, sans framework.
 - Backend Rust Axum + SQLx + SQLite embarqué.
 - Déploiement en 2 containers : `frontend` public et `backend` privé.
-- SQLite persisté dans `/data`.
+- SQLite persisté dans `backend/data/hearts.db` sur l'hôte et monté dans `/data` côté conteneur.
 - Les cœurs acceptés sont stockés comme des événements datés.
 
 ## Site
@@ -34,6 +34,14 @@ http://localhost:8080
 ```
 
 Le backend n'est pas publié sur l'hôte. Le frontend sert les fichiers statiques et proxifie `/api/*` vers le service `backend` sur le réseau interne Compose.
+
+La base SQLite est créée sur le filesystem local dans :
+
+```text
+backend/data/hearts.db
+```
+
+En production, ce chemin correspond à `/home/uggla/lovebin/backend/data/hearts.db`.
 
 ## Développement local
 

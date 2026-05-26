@@ -11,6 +11,7 @@ services:
   backend:
     build:
       context: ./backend
+    user: "${LOVEBIN_UID:-1000}:${LOVEBIN_GID:-1000}"
     environment:
       DATABASE_URL: sqlite:/data/hearts.db
       BIND_ADDR: 0.0.0.0:3000
@@ -22,8 +23,5 @@ services:
     expose:
       - "3000"
     volumes:
-      - hearts-data:/data
+      - ./backend/data:/data
     restart: unless-stopped
-
-volumes:
-  hearts-data:
